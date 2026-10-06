@@ -1,17 +1,15 @@
 name: Push Notification Worker
 
 on:
-  # Chạy mỗi 5 phút (GitHub min)
   schedule:
     - cron: '*/5 * * * *'
-  # Cho phép trigger từ cron-job.org hoặc thủ công
   workflow_dispatch:
 
 jobs:
   push:
     name: Send pending notifications
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
 
     steps:
       - name: Checkout code
@@ -22,8 +20,11 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install firebase-admin
-        run: npm install firebase-admin
+      - name: Install ALL dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Install firebase-admin + firestore explicitly
+        run: npm install firebase-admin @google-cloud/firestore --no-save
 
       - name: Run push worker
         env:
