@@ -1,0 +1,180 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ====== HELPERS ======
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isTeacher() {
+      return isSignedIn() && userDoc().role == 'GVCN';
+    }
+
+    function isAdmin() {
+      return isSignedIn() && userDoc().role == 'admin';
+    }
+
+    function isAdminOrTeacher() {
+      return isAdmin() || isTeacher();
+    }
+
+    function isStudent() {
+      return isSignedIn() && userDoc().role == 'student';
+    }
+
+    function sameTeam(teamId) {
+      return isSignedIn() && userDoc().teamId == teamId;
+    }
+
+    // ====== USERS ======
+    match /users/{userId} {
+      allow read: if request.auth.uid == userId || isTeacher() || isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin()
+                    || (request.auth.uid == userId
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['settings', 'fcmToken', 'lastSeen', 'teamId', 'status', 'activatedAt', 'updatedAt']));
+      allow delete: if isAdmin();
+    }
+
+    // ====== CLASSES ======
+    match /classes/{classId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    // ====== TEAMS ======
+    match /teams/{teamId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+      // Cho phép student cập nhật memberIds khi chọn tổ
+      allow update: if isStudent()
+                    && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['memberIds'])
+                    && request.resource.data.memberIds.hasAll(resource.data.memberIds);
+    }
+
+    // ====== PERIODS ======
+    match /periods/{periodId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    // ====== ACTIVITY TYPES (danh mục hoạt động) ======
+    match /activity_types/{typeId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin() || isTeacher();
+    }
+
+    // ====== REQUESTS ======
+    match /requests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isStudent()
+                    && request.resource.data.creatorId == request.auth.uid
+                    && request.resource.data.status == 'pending'
+                    && request.resource.data.voteCount == 0;
+      allow update: if isSignedIn()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['voteCount', 'voterIds', 'status',
+                                 'verifiedAt', 'updatedAt']);
+      allow delete: if false;   // append-only
+    }
+
+    // ====== VOTES (ẩn danh tính với học sinh) ======
+    match /votes/{voteId} {
+      allow read: if isTeacher() || isAdmin();
+      allow create: if isStudent()
+                    && request.resource.data.voterId == request.auth.uid;
+      allow update, delete: if false;   // immutable
+    }
+
+    // ====== REPORTS (tố cáo) ======
+    match /reports/{reportId} {
+      // Học sinh chỉ đọc report mình tạo hoặc report nhắm vào mình
+      allow read: if isTeacher() || isAdmin()
+                  || (isStudent() && (
+                       resource.data.reporterId == request.auth.uid
+                       || resource.data.targetId == request.auth.uid
+                     ));
+      allow create: if isStudent()
+                    && request.resource.data.reporterId == request.auth.uid
+                    && request.resource.data.targetId != request.auth.uid;
+      allow update: if isTeacher() || isAdmin()
+                    || (isStudent()
+                        && resource.data.targetId == request.auth.uid
+                        && request.resource.data.diff(resource.data).affectedKeys()
+                           .hasOnly(['appealSubmittedAt']));
+      allow delete: if false;
+    }
+
+    // ====== APPEALS ======
+    match /appeals/{appealId} {
+      allow read: if isTeacher() || isAdmin()
+                  || (isSignedIn()
+                      && resource.data.appellantId == request.auth.uid);
+      allow create: if isStudent()
+                    && request.resource.data.appellantId == request.auth.uid;
+      allow update: if isTeacher() || isAdmin();
+      allow delete: if false;
+    }
+
+    // ====== SCORE LEDGER (append-only) ======
+    match /score_ledger/{entryId} {
+      allow read: if isSignedIn();
+      allow create: if isTeacher() || isAdmin() || isStudent();
+      // Học sinh có thể tạo entry nhưng KHÔNG sửa/xóa — Cloud Functions là nguồn chính
+      allow update, delete: if false;
+    }
+
+    // ====== WARNINGS ======
+    match /warnings/{warningId} {
+      allow read: if isTeacher() || isAdmin();
+      allow create: if isAdmin();          // chỉ Cloud Functions tạo
+      allow update: if isTeacher() || isAdmin();
+      allow delete: if false;
+    }
+
+    // ====== NOTIFICATIONS ======
+    match /notifications/{notifId} {
+      allow read: if isSignedIn()
+                  && resource.data.userId == request.auth.uid;
+      allow create: if isAdmin();
+      allow update: if isSignedIn()
+                    && resource.data.userId == request.auth.uid
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                       .hasOnly(['read']);
+      allow delete: if false;
+    }
+
+    // ====== AUDIT LOGS ======
+    match /audit_logs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isSignedIn();
+      allow update, delete: if false;
+    }
+
+    // ====== TASKS (nhiệm vụ thi đua) ======
+    match /tasks/{taskId} {
+      allow read: if isSignedIn();
+      allow write: if isTeacher() || isAdmin();
+    }
+
+    // ====== CONFIG ======
+    match /config/{docId} {
+      allow read: if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ====== IMPORT QUEUE ======
+    match /import_queue/{queueId} {
+      allow read: if isAdmin();
+      allow create: if isAdmin();
+      allow update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+  }
+}
